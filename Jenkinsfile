@@ -1,6 +1,17 @@
 pipeline {
     agent any
 
+    options {
+        // Évite que deux scans de sécurité s'exécutent simultanément.
+        disableConcurrentBuilds()
+
+        // Protection globale contre un pipeline bloqué.
+        timeout(time: 25, unit: 'MINUTES')
+
+        // Ajoute les timestamps dans la console Jenkins.
+        timestamps()
+    }
+
     stages {
 
         stage('Checkout') {
@@ -10,7 +21,7 @@ pipeline {
                 sh '''
                     echo "Workspace : $PWD"
                     echo "Commit    : $(git rev-parse --short HEAD)"
-                    echo "Branche   : $(git rev-parse --abbrev-ref HEAD)"
+                    echo "Remote    : $(git remote get-url origin)"
                 '''
             }
         }
@@ -33,8 +44,7 @@ pipeline {
                     docker --version
 
                     echo "--- Juice Shop ---"
-                    curl -fsS -I http://127.0.0.1:3000 > /tmp/juice-shop-http.txt
-                    cat /tmp/juice-shop-http.txt
+                    curl -fsS -I --connect-timeout 10 http://127.0.0.1:3000
                 '''
             }
         }
@@ -47,7 +57,6 @@ pipeline {
                     mkdir -p reports
 
                     echo "Lancement de npm audit..."
-
                     npm audit --json > reports/sca.json || true
 
                     echo
@@ -60,45 +69,88 @@ const data = JSON.parse(
     fs.readFileSync('reports/sca.json', 'utf8')
 );
 
-const vulnerabilities = data.metadata?.vulnerabilities || {};
+const v = data.metadata?.vulnerabilities || {};
 
-console.log(`Low      : ${vulnerabilities.low ?? 0}`);
-console.log(`Moderate : ${vulnerabilities.moderate ?? 0}`);
-console.log(`High     : ${vulnerabilities.high ?? 0}`);
-console.log(`Critical : ${vulnerabilities.critical ?? 0}`);
-console.log(`Total    : ${vulnerabilities.total ?? 0}`);
+console.log(`Low      : ${v.low ?? 0}`);
+console.log(`Moderate : ${v.moderate ?? 0}`);
+console.log(`High     : ${v.high ?? 0}`);
+console.log(`Critical : ${v.critical ?? 0}`);
+console.log(`Total    : ${v.total ?? 0}`);
 NODE
                 '''
             }
         }
 
         stage('Additional Security Check - DAST') {
+            options {
+                // ZAP ne doit jamais bloquer le pipeline indéfiniment.
+                timeout(time: 15, unit: 'MINUTES')
+            }
+
             steps {
                 echo '=== Analyse DAST avec OWASP ZAP ==='
 
                 sh '''
+                    set +e
+
                     mkdir -p reports
-                    chmod 777 reports
+
+                    ZAP_CONTAINER="zap-jenkins-${BUILD_NUMBER}"
+
+                    cleanup() {
+                        echo "Nettoyage du conteneur ZAP..."
+                        docker rm -f "$ZAP_CONTAINER" >/dev/null 2>&1 || true
+                    }
+
+                    trap cleanup EXIT INT TERM
 
                     echo "Lancement de ZAP Baseline Scan..."
+                    echo "Conteneur : $ZAP_CONTAINER"
+                    echo "Cible     : http://127.0.0.1:3000"
 
-                    docker run --rm \
+                    timeout --foreground 12m \
+                    docker run \
+                        --name "$ZAP_CONTAINER" \
                         --network host \
                         -v "$PWD/reports:/zap/wrk/:rw" \
                         ghcr.io/zaproxy/zaproxy:stable \
                         zap-baseline.py \
                         -t http://127.0.0.1:3000 \
                         -J dast.json \
-                        -r dast.html \
-                        || true
+                        -r dast.html
+
+                    ZAP_RC=$?
+
+                    echo
+                    echo "Code retour ZAP : $ZAP_RC"
+
+                    # 124 = timeout GNU timeout
+                    if [ "$ZAP_RC" -eq 124 ]; then
+                        echo "ERREUR : ZAP a dépassé la limite de 12 minutes."
+                        exit 1
+                    fi
+
+                    # Les codes non nuls de ZAP peuvent signaler des alertes.
+                    # Ils ne sont donc pas considérés automatiquement comme
+                    # un échec technique du pipeline.
+                    echo "Le scan ZAP est terminé."
 
                     echo
                     echo "=== Vérification des rapports ZAP ==="
 
-                    test -f reports/dast.json
-                    test -f reports/dast.html
+                    if [ ! -f reports/dast.json ]; then
+                        echo "ERREUR : dast.json absent."
+                        exit 1
+                    fi
 
-                    ls -lh reports/
+                    if [ ! -f reports/dast.html ]; then
+                        echo "ERREUR : dast.html absent."
+                        exit 1
+                    fi
+
+                    ls -lh reports/dast.json reports/dast.html
+
+                    exit 0
                 '''
             }
         }
@@ -110,15 +162,16 @@ NODE
                 sh '''
                     {
                         echo "=========================================="
-                        echo "   JUICE SHOP - SECURITY PIPELINE"
+                        echo "       JUICE SHOP SECURITY PIPELINE"
                         echo "=========================================="
                         echo
                         echo "Build Jenkins : #${BUILD_NUMBER}"
                         echo "Commit        : $(git rev-parse --short HEAD)"
                         echo "Date          : $(date)"
                         echo
+
                         echo "------------- SCA / npm audit ------------"
-                        
+
                         node <<'NODE'
 const fs = require('fs');
 
@@ -139,16 +192,21 @@ NODE
                         echo "------------- DAST / OWASP ZAP -----------"
 
                         if [ -f reports/dast.json ]; then
-                            echo "Rapport JSON ZAP : présent"
+                            echo "Rapport JSON ZAP  : OK"
                         else
-                            echo "Rapport JSON ZAP : absent"
+                            echo "Rapport JSON ZAP  : ABSENT"
                         fi
 
                         if [ -f reports/dast.html ]; then
-                            echo "Rapport HTML ZAP : présent"
+                            echo "Rapport HTML ZAP  : OK"
                         else
-                            echo "Rapport HTML ZAP : absent"
+                            echo "Rapport HTML ZAP  : ABSENT"
                         fi
+
+                        echo
+                        echo "------------- Fichiers générés -----------"
+
+                        ls -lh reports/
 
                         echo
                         echo "=========================================="
@@ -162,7 +220,8 @@ NODE
         stage('Notification') {
             steps {
                 echo '=== Notification ==='
-                echo "Le pipeline #${BUILD_NUMBER} est terminé."
+                echo "Build #${BUILD_NUMBER} terminé."
+                echo "Statut Jenkins : ${currentBuild.currentResult}"
                 echo "Les rapports sont disponibles dans les artefacts Jenkins."
             }
         }
@@ -173,9 +232,11 @@ NODE
         always {
             echo '=== Archivage des rapports ==='
 
-            archiveArtifacts artifacts: 'reports/**',
-                             allowEmptyArchive: false,
-                             fingerprint: true
+            archiveArtifacts(
+                artifacts: 'reports/**',
+                allowEmptyArchive: true,
+                fingerprint: true
+            )
         }
 
         success {
@@ -184,6 +245,10 @@ NODE
 
         failure {
             echo '=== Pipeline terminé avec échec ==='
+        }
+
+        aborted {
+            echo '=== Pipeline interrompu ==='
         }
     }
 }
