@@ -2,14 +2,8 @@ pipeline {
     agent any
 
     options {
-        // Évite que deux scans de sécurité s'exécutent simultanément.
         disableConcurrentBuilds()
-
-        // Protection globale contre un pipeline bloqué.
         timeout(time: 25, unit: 'MINUTES')
-
-        // Ajoute les timestamps dans la console Jenkins.
-        timestamps()
     }
 
     stages {
@@ -83,7 +77,6 @@ NODE
 
         stage('Additional Security Check - DAST') {
             options {
-                // ZAP ne doit jamais bloquer le pipeline indéfiniment.
                 timeout(time: 15, unit: 'MINUTES')
             }
 
@@ -124,15 +117,11 @@ NODE
                     echo
                     echo "Code retour ZAP : $ZAP_RC"
 
-                    # 124 = timeout GNU timeout
                     if [ "$ZAP_RC" -eq 124 ]; then
                         echo "ERREUR : ZAP a dépassé la limite de 12 minutes."
                         exit 1
                     fi
 
-                    # Les codes non nuls de ZAP peuvent signaler des alertes.
-                    # Ils ne sont donc pas considérés automatiquement comme
-                    # un échec technique du pipeline.
                     echo "Le scan ZAP est terminé."
 
                     echo
