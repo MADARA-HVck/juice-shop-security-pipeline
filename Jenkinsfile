@@ -205,15 +205,6 @@ NODE
                 '''
             }
         }
-
-        stage('Notification') {
-            steps {
-                echo '=== Notification ==='
-                echo "Build #${BUILD_NUMBER} terminé."
-                echo "Statut Jenkins : ${currentBuild.currentResult}"
-                echo "Les rapports sont disponibles dans les artefacts Jenkins."
-            }
-        }
     }
 
     post {
@@ -225,6 +216,34 @@ NODE
                 artifacts: 'reports/**',
                 allowEmptyArchive: true,
                 fingerprint: true
+            )
+
+            echo '=== Envoi de la notification e-mail ==='
+
+            mail(
+                to: 'blackpower44444@gmail.com',
+                subject: "Jenkins - Juice Shop Security Pipeline - Build #${BUILD_NUMBER} - ${currentBuild.currentResult}",
+                body: """Bonjour,
+
+Le pipeline de sécurité Juice Shop vient de se terminer.
+
+Build : #${BUILD_NUMBER}
+Statut : ${currentBuild.currentResult}
+Commit : ${env.GIT_COMMIT ?: 'N/A'}
+
+Rapports générés :
+- SCA : npm audit
+- DAST : OWASP ZAP
+- security-summary.txt
+
+Les rapports sont disponibles dans Jenkins.
+
+URL du build :
+${env.BUILD_URL}
+
+Cordialement,
+Jenkins
+"""
             )
         }
 
