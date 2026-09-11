@@ -87,6 +87,7 @@ NODE
                     set +e
 
                     mkdir -p reports
+                    chmod 777 reports
 
                     ZAP_CONTAINER="zap-jenkins-${BUILD_NUMBER}"
 
@@ -108,6 +109,10 @@ NODE
                         -v "$PWD/reports:/zap/wrk/:rw" \
                         ghcr.io/zaproxy/zaproxy:stable \
                         zap-baseline.py \
+                        --autooff \
+                        -m 1 \
+                        -T 5 \
+                        -z "-silent" \
                         -t http://127.0.0.1:3000 \
                         -J dast.json \
                         -r dast.html
@@ -136,7 +141,8 @@ NODE
                         echo "ERREUR : dast.html absent."
                         exit 1
                     fi
-
+                    
+                    echo "=== Rapports ZAP disponibles ==="
                     ls -lh reports/dast.json reports/dast.html
 
                     exit 0
