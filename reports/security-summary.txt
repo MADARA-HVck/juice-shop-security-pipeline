@@ -1,0 +1,28 @@
+==========================================
+       JUICE SHOP SECURITY PIPELINE
+==========================================
+
+Build Jenkins : #8
+Commit        : da46eb0
+Date          : Fri Sep 11 06:00:20 PM UTC 2026
+
+------------- SCA / npm audit ------------
+Low      : 3
+Moderate : 16
+High     : 19
+Critical : 7
+Total    : 45
+
+------------- DAST / OWASP ZAP -----------
+Rapport JSON ZAP  : OK
+Rapport HTML ZAP  : OK
+
+------------- Fichiers générés -----------
+total 136K
+-rw-r--r-- 1 madara  madara  55K Sep 11 18:00 dast.html
+-rw-r--r-- 1 madara  madara  20K Sep 11 18:00 dast.json
+-rw-r--r-- 1 jenkins jenkins 52K Sep 11 17:59 sca.json
+-rw-r--r-- 1 jenkins jenkins 463 Sep 11 18:00 security-summary.txt
+-rw-r--r-- 1 madara  madara  843 Sep 11 17:04 zap.yaml
+
+==========================================
